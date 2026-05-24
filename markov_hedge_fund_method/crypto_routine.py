@@ -28,6 +28,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import requests
 
 from .providers import get_provider
 from .regime import (
@@ -209,7 +210,7 @@ def build_html(results: list[dict], timestamp: str) -> str:
     </div>"""
 
 
-def send_email(subject: str, html: str) -> None:
+def send_email_smtp(subject: str, html: str) -> None:
     email_to   = os.environ["EMAIL_TO"]
     smtp_user  = os.environ["SMTP_USER"]
     smtp_pass  = os.environ["SMTP_PASSWORD"]
@@ -225,6 +226,29 @@ def send_email(subject: str, html: str) -> None:
         smtp.sendmail(smtp_user, email_to, msg.as_string())
 
     print(f"Email enviado → {email_to}")
+
+
+def send_email_resend(subject: str, html: str) -> None:
+    api_key = os.environ["RESEND_API_KEY"]
+    email_to = os.environ["EMAIL_TO"]
+    email_from = os.environ.get("EMAIL_FROM", "Markov Report <onboarding@resend.dev>")
+
+    response = requests.post(
+        "https://api.resend.com/emails",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "from": email_from,
+            "to": [email_to],
+            "subject": subject,
+            "html": html,
+        },
+        timeout=20,
+    )
+    response.raise_for_status()
+    print(f"Email enviado via Resend → {email_to}")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -258,8 +282,8 @@ def main() -> int:
 
     print_table(results, timestamp)
 
-    if not os.environ.get("SMTP_USER"):
-        print("SMTP_USER no configurado — email omitido.")
+    if not os.environ.get("RESEND_API_KEY") and not os.environ.get("SMTP_USER"):
+        print("Ni RESEND_API_KEY ni SMTP_USER configurados — email omitido.")
         return 0
 
     high_risk = [r for r in results if not r.get("error") and r["p_bear"] > 0.60]
@@ -269,7 +293,14 @@ def main() -> int:
         else f"✅ Markov Crypto Report — {timestamp}"
     )
     html = build_html(results, timestamp)
-    send_email(subject, html)
+
+    try:
+        if os.environ.get("RESEND_API_KEY"):
+            send_email_resend(subject, html)
+        elif os.environ.get("SMTP_USER"):
+            send_email_smtp(subject, html)
+    except Exception as exc:  # noqa: BLE001
+        print(f"Email no enviado: {exc}")
     return 0
 
 
