@@ -1,25 +1,48 @@
 """Daily crypto routine — pure Python, zero Claude tokens.
 
-Runs the Markov regime model on a list of tickers and prints a summary table.
-All parsing, table formatting, and HIGH RISK flagging happens in Python.
+Runs the Markov regime model on a list of tickers, prints a summary table,
+and optionally sends an HTML email via Gmail SMTP.
 
 Usage:
     python -m markov_hedge_fund_method.crypto_routine \
         --tickers BTC-USD,ETH-USD,SOL-USD \
         --years 2
+
+Env vars (all optional — email is skipped if not set):
+    EMAIL_TO        Recipient address
+    SMTP_USER       Gmail address used to send
+    SMTP_PASSWORD   Gmail App Password (16-char, no spaces)
 """
 
 from __future__ import annotations
 
 import argparse
+import os
+import smtplib
 import sys
 import time
 from datetime import datetime, timezone
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from .regime import label_regimes, build_transition_matrix, stationary_distribution, walk_forward_backtest, STATES
+from .regime import (
+    STATES,
+    build_transition_matrix,
+    label_regimes,
+    stationary_distribution,
+    walk_forward_backtest,
+)
+
+# Load .env if present (local dev); Railway injects env vars directly
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+except ImportError:
+    pass
 
 
 def fetch(ticker: str, years: int) -> pd.DataFrame:
@@ -55,30 +78,27 @@ def analyze(ticker: str, years: int, window: int, threshold: float) -> dict:
 
     current_state = int(labels.iloc[-1])
     current_regime = STATES[current_state]
-    p_bear = float(P[current_state, 0])
-    p_sideways = float(P[current_state, 1])
-    p_bull = float(P[current_state, 2])
-    sharpe = result["sharpe"]
 
     return {
         "ticker": ticker,
         "current_regime": current_regime,
-        "p_bull": p_bull,
-        "p_sideways": p_sideways,
-        "p_bear": p_bear,
-        "sharpe": sharpe,
+        "p_bull": float(P[current_state, 2]),
+        "p_sideways": float(P[current_state, 1]),
+        "p_bear": float(P[current_state, 0]),
+        "sharpe": result["sharpe"],
         "stationary_bull": float(pi[2]),
         "rows": len(close),
         "error": None,
     }
 
 
-def print_table(results: list[dict]) -> None:
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    print(f"\nMarkov Crypto Regime Report — {now}")
+# ── CLI output ────────────────────────────────────────────────────────────────
+
+def print_table(results: list[dict], timestamp: str) -> list[dict]:
+    """Print ASCII table, return list of HIGH RISK results."""
+    print(f"\nMarkov Crypto Regime Report — {timestamp}")
     print("=" * 80)
-    header = f"{'Ticker':<10} {'Regime':<10} {'P(Bull)':>8} {'P(Bear)':>8} {'Sharpe':>8}  {'Flag'}"
-    print(header)
+    print(f"{'Ticker':<10} {'Regime':<10} {'P(Bull)':>8} {'P(Bear)':>8} {'Sharpe':>8}  {'Flag'}")
     print("-" * 80)
 
     high_risk = []
@@ -86,11 +106,11 @@ def print_table(results: list[dict]) -> None:
         if r.get("error"):
             print(f"  {r['ticker']:<10} ERROR: {r['error']}")
             continue
-        sharpe_str = f"{r['sharpe']:.3f}" if np.isfinite(r["sharpe"]) else "  N/A"
+        sharpe_str = f"{r['sharpe']:.3f}" if np.isfinite(r["sharpe"]) else "   N/A"
         flag = ""
         if r["p_bear"] > 0.60:
             flag = "HIGH RISK"
-            high_risk.append(r["ticker"])
+            high_risk.append(r)
         print(
             f"  {r['ticker']:<10} {r['current_regime']:<10} "
             f"{r['p_bull']*100:>7.1f}% {r['p_bear']*100:>7.1f}% "
@@ -99,23 +119,106 @@ def print_table(results: list[dict]) -> None:
 
     print("=" * 80)
     if high_risk:
-        print(f"HIGH RISK tickers (P(Bear) > 60%): {', '.join(high_risk)}")
+        print(f"HIGH RISK: {', '.join(r['ticker'] for r in high_risk)}")
     else:
         print("No HIGH RISK tickers detected.")
     print()
+    return high_risk
 
+
+# ── HTML email ────────────────────────────────────────────────────────────────
+
+def _regime_color(regime: str) -> str:
+    return {"Bull": "#15803d", "Bear": "#dc2626", "Sideways": "#d97706"}.get(regime, "#334155")
+
+
+def _row_html(r: dict) -> str:
+    sharpe_str = f"{r['sharpe']:.3f}" if np.isfinite(r["sharpe"]) else "N/A"
+    flag = "🔴 HIGH RISK" if r["p_bear"] > 0.60 else ""
+    regime_color = _regime_color(r["current_regime"])
+    rows = [
+        ("Régimen actual", f'<span style="color:{regime_color};font-weight:bold;">{r["current_regime"]}</span>'),
+        ("P(Bull mañana)", f"{r['p_bull']*100:.1f}%"),
+        ("P(Bear mañana)", f"{r['p_bear']*100:.1f}%"),
+        ("P(Sideways)",    f"{r['p_sideways']*100:.1f}%"),
+        ("Sharpe WF",      sharpe_str),
+        ("Flag",           flag),
+    ]
+    rows_html = "".join(
+        f'<tr style="background:{"#f8fafc" if i % 2 == 0 else "#ffffff"};">'
+        f'<td style="padding:6px 12px;color:#64748b;white-space:nowrap;">{label}</td>'
+        f'<td style="padding:6px 12px;font-size:13px;">{value}</td>'
+        f"</tr>"
+        for i, (label, value) in enumerate(rows)
+        if value
+    )
+    return f"""
+    <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-family:monospace;font-size:13px;">
+      <thead>
+        <tr style="background:#1e293b;color:#f1f5f9;">
+          <th colspan="2" style="padding:10px 14px;text-align:left;">{r['ticker']}</th>
+        </tr>
+      </thead>
+      <tbody>{rows_html}</tbody>
+    </table>"""
+
+
+def build_html(results: list[dict], timestamp: str) -> str:
+    ok = [r for r in results if not r.get("error")]
+    errors = [r for r in results if r.get("error")]
+    cards = "".join(_row_html(r) for r in ok)
+    error_html = ""
+    if errors:
+        error_html = "<p style='color:#dc2626;font-size:12px;'>Errores: " + \
+                     ", ".join(f"{r['ticker']} ({r['error']})" for r in errors) + "</p>"
+    high_risk = [r for r in ok if r["p_bear"] > 0.60]
+    summary = f"<strong>{len(high_risk)} HIGH RISK</strong>" if high_risk else "Sin alertas HIGH RISK"
+
+    return f"""
+    <div style="font-family:sans-serif;max-width:680px;margin:auto;padding:24px;background:#ffffff;">
+      <h2 style="margin:0 0 4px;color:#0f172a;">Markov Crypto Report</h2>
+      <p style="margin:0 0 6px;color:#64748b;font-size:13px;">{timestamp}</p>
+      <p style="margin:0 0 24px;font-size:13px;color:#334155;">{summary}</p>
+      {cards}
+      {error_html}
+      <p style="margin-top:24px;color:#94a3b8;font-size:11px;text-align:center;">
+        markov-hedge-fund-method · Railway cron
+      </p>
+    </div>"""
+
+
+def send_email(subject: str, html: str) -> None:
+    email_to   = os.environ["EMAIL_TO"]
+    smtp_user  = os.environ["SMTP_USER"]
+    smtp_pass  = os.environ["SMTP_PASSWORD"]
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = smtp_user
+    msg["To"]      = email_to
+    msg.attach(MIMEText(html, "html"))
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+        smtp.login(smtp_user, smtp_pass)
+        smtp.sendmail(smtp_user, email_to, msg.as_string())
+
+    print(f"Email enviado → {email_to}")
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="crypto-routine")
     parser.add_argument("--tickers", default="BTC-USD,ETH-USD,SOL-USD,ZEC-USD,XRP-USD,DOGE-USD,NEAR-USD,BNB-USD,SUI-USD")
-    parser.add_argument("--years", type=int, default=2)
-    parser.add_argument("--window", type=int, default=20)
+    parser.add_argument("--years",     type=int,   default=2)
+    parser.add_argument("--window",    type=int,   default=20)
     parser.add_argument("--threshold", type=float, default=0.02)
     args = parser.parse_args()
 
     tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
-    print(f"Running Markov model on {len(tickers)} tickers (years={args.years}, window={args.window})...")
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
+    print(f"Running Markov model on {len(tickers)} tickers (years={args.years}, window={args.window})...")
     results = []
     for ticker in tickers:
         print(f"  {ticker}...", end=" ", flush=True)
@@ -123,7 +226,20 @@ def main() -> int:
         results.append(r)
         print("ok" if not r.get("error") else f"SKIP ({r['error']})")
 
-    print_table(results)
+    print_table(results, timestamp)
+
+    if not os.environ.get("SMTP_USER"):
+        print("SMTP_USER no configurado — email omitido.")
+        return 0
+
+    high_risk = [r for r in results if not r.get("error") and r["p_bear"] > 0.60]
+    subject = (
+        f"🔴 Markov Crypto — {len(high_risk)} HIGH RISK: {', '.join(r['ticker'] for r in high_risk)}"
+        if high_risk
+        else f"✅ Markov Crypto Report — {timestamp}"
+    )
+    html = build_html(results, timestamp)
+    send_email(subject, html)
     return 0
 
 
