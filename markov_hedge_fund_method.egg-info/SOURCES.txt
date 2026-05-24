@@ -1,5 +1,7 @@
 pyproject.toml
 markov_hedge_fund_method/__init__.py
+markov_hedge_fund_method/crypto_routine.py
+markov_hedge_fund_method/db.py
 markov_hedge_fund_method/hmm_extension.py
 markov_hedge_fund_method/regime.py
 markov_hedge_fund_method/run.py
@@ -8,3 +10,8 @@ markov_hedge_fund_method.egg-info/SOURCES.txt
 markov_hedge_fund_method.egg-info/dependency_links.txt
 markov_hedge_fund_method.egg-info/requires.txt
 markov_hedge_fund_method.egg-info/top_level.txt
+markov_hedge_fund_method/providers/__init__.py
+markov_hedge_fund_method/providers/base.py
+markov_hedge_fund_method/providers/yahoo.py
+markov_hedge_fund_method/services/__init__.py
+markov_hedge_fund_method/services/data_service.py

@@ -29,6 +29,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from .providers import get_provider
 from .regime import (
     STATES,
     build_transition_matrix,
@@ -36,6 +37,7 @@ from .regime import (
     stationary_distribution,
     walk_forward_backtest,
 )
+from .services.data_service import DataService
 
 # Load .env if present (local dev); Railway injects env vars directly
 try:
@@ -62,14 +64,33 @@ def fetch(ticker: str, years: int) -> pd.DataFrame:
     return pd.DataFrame()
 
 
-def analyze(ticker: str, years: int, window: int, threshold: float) -> dict:
+def _legacy_close_series_from_yahoo(ticker: str, years: int) -> pd.Series:
     df = fetch(ticker, years)
     if df.empty:
-        return {"ticker": ticker, "error": "no data from Yahoo Finance"}
-
+        return pd.Series(dtype=float)
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
-    close = df["Close"].dropna()
+    return df["Close"].dropna()
+
+
+def analyze(ticker: str, years: int, window: int, threshold: float) -> dict:
+    close = pd.Series(dtype=float)
+    ingest_meta: dict = {}
+    db_enabled = bool(os.environ.get("DATABASE_URL"))
+
+    if db_enabled:
+        try:
+            provider = get_provider()
+            service = DataService(provider=provider)
+            close, ingest_meta = service.get_close_series(ticker=ticker, years=years)
+        except Exception as exc:  # noqa: BLE001
+            ingest_meta = {"provider": "fallback", "error": str(exc)}
+
+    if close.empty:
+        close = _legacy_close_series_from_yahoo(ticker, years)
+
+    if close.empty:
+        return {"ticker": ticker, "error": "no data from market data provider"}
 
     labels = label_regimes(close, window=window, threshold=threshold)
     P = build_transition_matrix(labels)
@@ -88,6 +109,7 @@ def analyze(ticker: str, years: int, window: int, threshold: float) -> dict:
         "sharpe": result["sharpe"],
         "stationary_bull": float(pi[2]),
         "rows": len(close),
+        "ingest_meta": ingest_meta,
         "error": None,
     }
 
@@ -225,6 +247,14 @@ def main() -> int:
         r = analyze(ticker, args.years, args.window, args.threshold)
         results.append(r)
         print("ok" if not r.get("error") else f"SKIP ({r['error']})")
+        if r.get("ingest_meta"):
+            meta = r["ingest_meta"]
+            provider = meta.get("provider", "unknown")
+            rows_fetched = meta.get("rows_fetched", "n/a")
+            rows_upserted = meta.get("rows_upserted", "n/a")
+            print(
+                f"    provider={provider} rows_fetched={rows_fetched} rows_upserted={rows_upserted}"
+            )
 
     print_table(results, timestamp)
 
