@@ -1,6 +1,5 @@
 [build]
 builder = "NIXPACKS"
-buildCommand = "pip install ."
 
 [deploy]
 startCommand = "python -m markov_hedge_fund_method.crypto_routine --tickers BTC-USD,ETH-USD,SOL-USD,ZEC-USD,XRP-USD,DOGE-USD,NEAR-USD,BNB-USD,SUI-USD --years 2"
