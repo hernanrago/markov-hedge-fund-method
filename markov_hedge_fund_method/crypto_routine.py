@@ -57,10 +57,18 @@ _INTERVAL_DEFAULTS: dict[str, dict] = {
 }
 
 
+_MAX_LOOKBACK_DAYS: dict[str, int] = {
+    "1m": 7, "5m": 60, "15m": 60, "30m": 60,
+    "1h": 720, "4h": 720, "1d": 36500,
+}
+
+
 def fetch(ticker: str, years: int, interval: str = "1d") -> pd.DataFrame:
     import yfinance as yf
     end = pd.Timestamp.now(tz="UTC").normalize()
-    start = end - pd.DateOffset(years=years)
+    max_days = _MAX_LOOKBACK_DAYS.get(interval, 720)
+    actual_days = min(years * 365, max_days)
+    start = end - pd.Timedelta(days=actual_days)
     for attempt in (1, 2):
         try:
             df = yf.download(ticker, start=start.strftime("%Y-%m-%d"),

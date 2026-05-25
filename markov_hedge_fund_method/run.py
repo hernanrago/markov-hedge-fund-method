@@ -37,7 +37,7 @@ _INTERVAL_DEFAULTS: dict[str, dict] = {
 
 _MAX_LOOKBACK_DAYS: dict[str, int] = {
     "1m": 7, "5m": 60, "15m": 60, "30m": 60,
-    "1h": 730, "4h": 730, "1d": 36500,
+    "1h": 720, "4h": 720, "1d": 36500,
 }
 
 
