@@ -48,14 +48,24 @@ except ImportError:
     pass
 
 
-def fetch(ticker: str, years: int) -> pd.DataFrame:
+_INTERVAL_DEFAULTS: dict[str, dict] = {
+    "1d":  {"bars_per_year": 252,    "window": 20,   "min_train": 252},
+    "1h":  {"bars_per_year": 8760,   "window": 168,  "min_train": 2016},
+    "4h":  {"bars_per_year": 2190,   "window": 42,   "min_train": 504},
+    "15m": {"bars_per_year": 35040,  "window": 672,  "min_train": 8064},
+    "5m":  {"bars_per_year": 105120, "window": 2016, "min_train": 24192},
+}
+
+
+def fetch(ticker: str, years: int, interval: str = "1d") -> pd.DataFrame:
     import yfinance as yf
     end = pd.Timestamp.now(tz="UTC").normalize()
     start = end - pd.DateOffset(years=years)
     for attempt in (1, 2):
         try:
             df = yf.download(ticker, start=start.strftime("%Y-%m-%d"),
-                             end=end.strftime("%Y-%m-%d"), progress=False, auto_adjust=True)
+                             end=end.strftime("%Y-%m-%d"), interval=interval,
+                             progress=False, auto_adjust=True)
         except Exception:
             df = pd.DataFrame()
         if not df.empty:
@@ -65,8 +75,8 @@ def fetch(ticker: str, years: int) -> pd.DataFrame:
     return pd.DataFrame()
 
 
-def _legacy_close_series_from_yahoo(ticker: str, years: int) -> pd.Series:
-    df = fetch(ticker, years)
+def _legacy_close_series_from_yahoo(ticker: str, years: int, interval: str = "1d") -> pd.Series:
+    df = fetch(ticker, years, interval)
     if df.empty:
         return pd.Series(dtype=float)
     if isinstance(df.columns, pd.MultiIndex):
@@ -74,21 +84,25 @@ def _legacy_close_series_from_yahoo(ticker: str, years: int) -> pd.Series:
     return df["Close"].dropna()
 
 
-def analyze(ticker: str, years: int, window: int, threshold: float) -> dict:
+def analyze(ticker: str, years: int, window: int, threshold: float, interval: str = "1d") -> dict:
     close = pd.Series(dtype=float)
     ingest_meta: dict = {}
     db_enabled = bool(os.environ.get("DATABASE_URL"))
+
+    defaults = _INTERVAL_DEFAULTS.get(interval, _INTERVAL_DEFAULTS["1d"])
+    bars_per_year = defaults["bars_per_year"]
+    min_train = defaults["min_train"]
 
     if db_enabled:
         try:
             provider = get_provider()
             service = DataService(provider=provider)
-            close, ingest_meta = service.get_close_series(ticker=ticker, years=years)
+            close, ingest_meta = service.get_close_series(ticker=ticker, years=years, interval=interval)
         except Exception as exc:  # noqa: BLE001
             ingest_meta = {"provider": "fallback", "error": str(exc)}
 
     if close.empty:
-        close = _legacy_close_series_from_yahoo(ticker, years)
+        close = _legacy_close_series_from_yahoo(ticker, years, interval)
 
     if close.empty:
         return {"ticker": ticker, "error": "no data from market data provider"}
@@ -96,7 +110,7 @@ def analyze(ticker: str, years: int, window: int, threshold: float) -> dict:
     labels = label_regimes(close, window=window, threshold=threshold)
     P = build_transition_matrix(labels)
     pi = stationary_distribution(P)
-    result = walk_forward_backtest(close, labels)
+    result = walk_forward_backtest(close, labels, min_train=min_train, bars_per_year=bars_per_year)
 
     current_state = int(labels.iloc[-1])
     current_regime = STATES[current_state]
@@ -257,18 +271,25 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="crypto-routine")
     parser.add_argument("--tickers", default="BTC-USD,ETH-USD,SOL-USD,ZEC-USD,XRP-USD,DOGE-USD,NEAR-USD,BNB-USD,SUI-USD")
     parser.add_argument("--years",     type=int,   default=2)
-    parser.add_argument("--window",    type=int,   default=20)
+    parser.add_argument("--window",    type=int,   default=None,
+        help="Rolling window in bars (default: auto from --interval)")
     parser.add_argument("--threshold", type=float, default=0.02)
+    parser.add_argument(
+        "--interval", default="1d",
+        choices=["1d", "1h", "4h", "15m", "5m"],
+        help="Bar interval. 1h: up to 730 days history from Yahoo Finance.",
+    )
     args = parser.parse_args()
 
+    window = args.window or _INTERVAL_DEFAULTS.get(args.interval, _INTERVAL_DEFAULTS["1d"])["window"]
     tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-    print(f"Running Markov model on {len(tickers)} tickers (years={args.years}, window={args.window})...")
+    print(f"Running Markov model on {len(tickers)} tickers (years={args.years}, window={window}, interval={args.interval})...")
     results = []
     for ticker in tickers:
         print(f"  {ticker}...", end=" ", flush=True)
-        r = analyze(ticker, args.years, args.window, args.threshold)
+        r = analyze(ticker, args.years, window, args.threshold, interval=args.interval)
         results.append(r)
         print("ok" if not r.get("error") else f"SKIP ({r['error']})")
         if r.get("ingest_meta"):
