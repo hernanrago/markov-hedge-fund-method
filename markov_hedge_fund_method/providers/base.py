@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import datetime
 from typing import Protocol
 
 
@@ -9,7 +9,8 @@ from typing import Protocol
 class PriceBar:
     ticker: str
     provider_symbol: str
-    date: date
+    interval: str
+    ts: datetime
     open: float | None
     high: float | None
     low: float | None
@@ -21,5 +22,11 @@ class MarketDataProvider(Protocol):
     def name(self) -> str:
         ...
 
-    def fetch_history(self, symbol: str, start: date, end: date) -> list[PriceBar]:
+    def fetch_history(
+        self,
+        symbol: str,
+        start: datetime,
+        end: datetime,
+        interval: str = "1d",
+    ) -> list[PriceBar]:
         ...
