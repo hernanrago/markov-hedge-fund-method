@@ -49,6 +49,7 @@ def ensure_schema(conn: psycopg.Connection) -> None:
             """
             SELECT column_name FROM information_schema.columns
             WHERE table_name = 'price_history' AND column_name = 'date'
+              AND table_schema = current_schema()
             """
         )
         has_old_schema = cur.fetchone() is not None
@@ -58,7 +59,7 @@ def ensure_schema(conn: psycopg.Connection) -> None:
             cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS interval TEXT")
             cur.execute("UPDATE price_history SET interval = '1d' WHERE interval IS NULL")
             cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS ts TIMESTAMPTZ")
-            cur.execute("UPDATE price_history SET ts = date::TIMESTAMPTZ WHERE ts IS NULL")
+            cur.execute("UPDATE price_history SET ts = (date::timestamp AT TIME ZONE 'UTC') WHERE ts IS NULL")
             cur.execute("ALTER TABLE price_history DROP CONSTRAINT price_history_pkey")
             cur.execute("ALTER TABLE price_history ALTER COLUMN interval SET NOT NULL")
             cur.execute("ALTER TABLE price_history ALTER COLUMN ts SET NOT NULL")
