@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, datetime
 from typing import Iterator
 
 import pandas as pd
@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS price_history (
     ticker TEXT NOT NULL,
     provider TEXT NOT NULL,
     provider_symbol TEXT NOT NULL,
-    date DATE NOT NULL,
+    interval TEXT NOT NULL DEFAULT '1d',
+    ts TIMESTAMPTZ NOT NULL,
     open DOUBLE PRECISION,
     high DOUBLE PRECISION,
     low DOUBLE PRECISION,
@@ -24,11 +25,11 @@ CREATE TABLE IF NOT EXISTS price_history (
     volume DOUBLE PRECISION,
     ingested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (provider, provider_symbol, date)
+    PRIMARY KEY (provider, provider_symbol, interval, ts)
 );
 
-CREATE INDEX IF NOT EXISTS idx_price_history_ticker_date
-    ON price_history (ticker, date DESC);
+CREATE INDEX IF NOT EXISTS idx_price_history_ticker_ts
+    ON price_history (ticker, interval, ts DESC);
 """
 
 
@@ -43,22 +44,60 @@ def connect() -> Iterator[psycopg.Connection]:
 
 def ensure_schema(conn: psycopg.Connection) -> None:
     with conn.cursor() as cur:
-        cur.execute(SCHEMA_SQL)
+        # Check if old schema (has 'date' column)
+        cur.execute(
+            """
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'price_history' AND column_name = 'date'
+            """
+        )
+        has_old_schema = cur.fetchone() is not None
+
+        if has_old_schema:
+            # Migrate: date DATE → ts TIMESTAMPTZ + add interval TEXT
+            cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS interval TEXT")
+            cur.execute("UPDATE price_history SET interval = '1d' WHERE interval IS NULL")
+            cur.execute("ALTER TABLE price_history ADD COLUMN IF NOT EXISTS ts TIMESTAMPTZ")
+            cur.execute("UPDATE price_history SET ts = date::TIMESTAMPTZ WHERE ts IS NULL")
+            cur.execute("ALTER TABLE price_history DROP CONSTRAINT price_history_pkey")
+            cur.execute("ALTER TABLE price_history ALTER COLUMN interval SET NOT NULL")
+            cur.execute("ALTER TABLE price_history ALTER COLUMN ts SET NOT NULL")
+            cur.execute(
+                "ALTER TABLE price_history ADD PRIMARY KEY (provider, provider_symbol, interval, ts)"
+            )
+            cur.execute("ALTER TABLE price_history DROP COLUMN date")
+            cur.execute("DROP INDEX IF EXISTS idx_price_history_ticker_date")
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_price_history_ticker_ts
+                    ON price_history (ticker, interval, ts DESC)
+                """
+            )
+        else:
+            cur.execute(SCHEMA_SQL)
     conn.commit()
 
 
-def get_last_date(conn: psycopg.Connection, ticker: str, provider: str) -> date | None:
+def get_last_ts(
+    conn: psycopg.Connection, ticker: str, provider: str, interval: str
+) -> datetime | None:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT MAX(date)
+            SELECT MAX(ts)
             FROM price_history
-            WHERE ticker = %s AND provider = %s
+            WHERE ticker = %s AND provider = %s AND interval = %s
             """,
-            (ticker, provider),
+            (ticker, provider, interval),
         )
         row = cur.fetchone()
     return row[0] if row and row[0] is not None else None
+
+
+def get_last_date(conn: psycopg.Connection, ticker: str, provider: str) -> date | None:
+    """Deprecated: use get_last_ts instead."""
+    ts = get_last_ts(conn, ticker, provider, interval="1d")
+    return ts.date() if ts is not None else None
 
 
 def upsert_price_bars(conn: psycopg.Connection, provider: str, bars: list[PriceBar]) -> int:
@@ -70,7 +109,8 @@ def upsert_price_bars(conn: psycopg.Connection, provider: str, bars: list[PriceB
             b.ticker,
             provider,
             b.provider_symbol,
-            b.date,
+            b.interval,
+            b.ts,
             b.open,
             b.high,
             b.low,
@@ -84,10 +124,11 @@ def upsert_price_bars(conn: psycopg.Connection, provider: str, bars: list[PriceB
         cur.executemany(
             """
             INSERT INTO price_history (
-                ticker, provider, provider_symbol, date, open, high, low, close, volume
+                ticker, provider, provider_symbol, interval, ts,
+                open, high, low, close, volume
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (provider, provider_symbol, date)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (provider, provider_symbol, interval, ts)
             DO UPDATE SET
                 open = EXCLUDED.open,
                 high = EXCLUDED.high,
@@ -102,16 +143,18 @@ def upsert_price_bars(conn: psycopg.Connection, provider: str, bars: list[PriceB
     return len(payload)
 
 
-def load_close_series(conn: psycopg.Connection, ticker: str, provider: str) -> pd.Series:
+def load_close_series(
+    conn: psycopg.Connection, ticker: str, provider: str, interval: str = "1d"
+) -> pd.Series:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT date, close
+            SELECT ts, close
             FROM price_history
-            WHERE ticker = %s AND provider = %s AND close IS NOT NULL
-            ORDER BY date ASC
+            WHERE ticker = %s AND provider = %s AND interval = %s AND close IS NOT NULL
+            ORDER BY ts ASC
             """,
-            (ticker, provider),
+            (ticker, provider, interval),
         )
         rows = cur.fetchall()
 
