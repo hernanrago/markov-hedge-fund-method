@@ -1,7 +1,10 @@
 """CLI entry point: fetch -> label -> matrix -> stationary -> walk-forward.
 
 Usage:
-    uv run python -m markov_hedge_fund_method.run --ticker SPY --years 10 --window 20
+    uv run python -m markov_hedge_fund_method.run --ticker BTC-USD --years 2 --interval 1h
+    uv run python -m markov_hedge_fund_method.run --ticker SPY --years 10 --interval 1d
+
+Note: bars_per_year defaults assume 24/7 crypto trading. For equities use --interval 1d.
 """
 
 from __future__ import annotations
@@ -32,6 +35,11 @@ _INTERVAL_DEFAULTS: dict[str, dict] = {
     "5m":  {"bars_per_year": 105120, "window": 2016, "min_train": 6048},
 }
 
+_MAX_LOOKBACK_DAYS: dict[str, int] = {
+    "1m": 7, "5m": 60, "15m": 60, "30m": 60,
+    "1h": 730, "4h": 730, "1d": 36500,
+}
+
 
 def _hmm_available() -> bool:
     if HMM_FLAG_FILE.exists():
@@ -46,8 +54,10 @@ def _hmm_available() -> bool:
 def _fetch_with_retry(ticker: str, years: int, interval: str = "1d") -> pd.DataFrame:
     import yfinance as yf
 
-    end = pd.Timestamp.utcnow().normalize()
-    start = end - pd.DateOffset(years=years)
+    end = pd.Timestamp.now(tz="UTC").normalize()
+    max_days = _MAX_LOOKBACK_DAYS.get(interval, 730)
+    actual_days = min(years * 365, max_days)
+    start = end - pd.Timedelta(days=actual_days)
 
     for attempt in (1, 2):
         try:
