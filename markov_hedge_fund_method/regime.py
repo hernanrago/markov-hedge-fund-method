@@ -66,6 +66,7 @@ def walk_forward_backtest(
     close: pd.Series,
     labels: pd.Series,
     min_train: int = 252,
+    bars_per_year: int = 252,
 ) -> dict:
     """Walk-forward: at each day t, fit the matrix on labels up to t-1,
     derive the signal from the current state, hold for one day, score.
@@ -93,7 +94,7 @@ def walk_forward_backtest(
     if sr.std(ddof=1) == 0 or not np.isfinite(sr.std(ddof=1)):
         sharpe = float("nan")
     else:
-        sharpe = float(sr.mean() / sr.std(ddof=1) * np.sqrt(252))
+        sharpe = float(sr.mean() / sr.std(ddof=1) * np.sqrt(bars_per_year))
 
     equity = (1.0 + sr).cumprod()
     running_max = np.maximum.accumulate(equity)
