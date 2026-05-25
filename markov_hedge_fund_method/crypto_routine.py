@@ -52,8 +52,8 @@ _INTERVAL_DEFAULTS: dict[str, dict] = {
     "1d":  {"bars_per_year": 252,    "window": 20,   "min_train": 252},
     "1h":  {"bars_per_year": 8760,   "window": 168,  "min_train": 2016},
     "4h":  {"bars_per_year": 2190,   "window": 42,   "min_train": 504},
-    "15m": {"bars_per_year": 35040,  "window": 672,  "min_train": 8064},
-    "5m":  {"bars_per_year": 105120, "window": 2016, "min_train": 24192},
+    "15m": {"bars_per_year": 35040,  "window": 672,  "min_train": 2016},
+    "5m":  {"bars_per_year": 105120, "window": 2016, "min_train": 6048},
 }
 
 
@@ -281,7 +281,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    window = args.window or _INTERVAL_DEFAULTS.get(args.interval, _INTERVAL_DEFAULTS["1d"])["window"]
+    window = args.window if args.window is not None else _INTERVAL_DEFAULTS.get(args.interval, _INTERVAL_DEFAULTS["1d"])["window"]
     tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
