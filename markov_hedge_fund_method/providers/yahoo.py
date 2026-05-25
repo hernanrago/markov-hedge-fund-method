@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import datetime, time, timezone
 
 import pandas as pd
 import yfinance as yf
@@ -12,11 +12,18 @@ class YahooProvider:
     def name(self) -> str:
         return "yahoo"
 
-    def fetch_history(self, symbol: str, start: date, end: date) -> list[PriceBar]:
+    def fetch_history(
+        self,
+        symbol: str,
+        start: datetime,
+        end: datetime,
+        interval: str = "1d",
+    ) -> list[PriceBar]:
         df = yf.download(
             symbol,
             start=start.strftime("%Y-%m-%d"),
             end=end.strftime("%Y-%m-%d"),
+            interval=interval,
             progress=False,
             auto_adjust=True,
         )
@@ -28,11 +35,16 @@ class YahooProvider:
 
         bars: list[PriceBar] = []
         for idx, row in df.iterrows():
+            if idx.tzinfo is None:
+                ts = datetime.combine(idx.date(), time.min, tzinfo=timezone.utc)
+            else:
+                ts = idx.to_pydatetime().astimezone(timezone.utc)
             bars.append(
                 PriceBar(
                     ticker=symbol,
                     provider_symbol=symbol,
-                    date=idx.date(),
+                    interval=interval,
+                    ts=ts,
                     open=_maybe_float(row.get("Open")),
                     high=_maybe_float(row.get("High")),
                     low=_maybe_float(row.get("Low")),
