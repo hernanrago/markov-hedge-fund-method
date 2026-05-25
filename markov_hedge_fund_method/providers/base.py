@@ -7,10 +7,11 @@ from typing import Protocol
 
 @dataclass(frozen=True)
 class PriceBar:
+    """Represents a single OHLCV price bar for a given ticker and interval."""
     ticker: str
     provider_symbol: str
-    interval: str
-    ts: datetime
+    interval: str          # e.g. '1d', '1h', '4h', '15m', '5m'
+    ts: datetime           # UTC
     open: float | None
     high: float | None
     low: float | None
