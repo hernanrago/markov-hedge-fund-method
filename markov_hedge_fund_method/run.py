@@ -24,6 +24,14 @@ from .regime import (
 
 HMM_FLAG_FILE = Path(__file__).resolve().parent.parent / ".hmm_available"
 
+_INTERVAL_DEFAULTS: dict[str, dict] = {
+    "1d":  {"bars_per_year": 252,    "window": 20,   "min_train": 252},
+    "1h":  {"bars_per_year": 8760,   "window": 168,  "min_train": 2016},
+    "4h":  {"bars_per_year": 2190,   "window": 42,   "min_train": 504},
+    "15m": {"bars_per_year": 35040,  "window": 672,  "min_train": 2016},
+    "5m":  {"bars_per_year": 105120, "window": 2016, "min_train": 6048},
+}
+
 
 def _hmm_available() -> bool:
     if HMM_FLAG_FILE.exists():
@@ -35,7 +43,7 @@ def _hmm_available() -> bool:
         return False
 
 
-def _fetch_with_retry(ticker: str, years: int) -> pd.DataFrame:
+def _fetch_with_retry(ticker: str, years: int, interval: str = "1d") -> pd.DataFrame:
     import yfinance as yf
 
     end = pd.Timestamp.utcnow().normalize()
@@ -47,6 +55,7 @@ def _fetch_with_retry(ticker: str, years: int) -> pd.DataFrame:
                 ticker,
                 start=start.strftime("%Y-%m-%d"),
                 end=end.strftime("%Y-%m-%d"),
+                interval=interval,
                 progress=False,
                 auto_adjust=True,
             )
@@ -71,21 +80,31 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="markov-hedge-fund-method")
     parser.add_argument("--ticker", default="SPY")
     parser.add_argument("--years", type=int, default=10)
-    parser.add_argument("--window", type=int, default=20)
+    parser.add_argument("--window", type=int, default=None)
     parser.add_argument("--threshold", type=float, default=0.02)
     parser.add_argument("--no-hmm", action="store_true")
+    parser.add_argument(
+        "--interval", default="1d",
+        choices=["1d", "1h", "4h", "15m", "5m"],
+        help="Bar interval. 1h: up to 730 days history from Yahoo Finance.",
+    )
     args = parser.parse_args()
 
-    print(f"\nmarkov-hedge-fund-method — ticker={args.ticker} years={args.years} window={args.window}")
+    defaults = _INTERVAL_DEFAULTS.get(args.interval, _INTERVAL_DEFAULTS["1d"])
+    window = args.window if args.window is not None else defaults["window"]
+    bars_per_year = defaults["bars_per_year"]
+    min_train = defaults["min_train"]
+
+    print(f"\nmarkov-hedge-fund-method — ticker={args.ticker} years={args.years} window={window} interval={args.interval}")
     print(f"  fetching {args.ticker} from Yahoo Finance...")
-    df = _fetch_with_retry(args.ticker, args.years)
+    df = _fetch_with_retry(args.ticker, args.years, interval=args.interval)
 
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     close = df["Close"].dropna()
     print(f"  fetched {len(close)} rows | {close.index.min().date()} -> {close.index.max().date()}")
 
-    labels = label_regimes(close, window=args.window, threshold=args.threshold)
+    labels = label_regimes(close, window=window, threshold=args.threshold)
     P = build_transition_matrix(labels)
     pi = stationary_distribution(P)
 
@@ -105,7 +124,7 @@ def main() -> int:
         print(f"  {s:>9s}: {p*100:.2f}%")
 
     print("\nWalk-forward backtest (re-estimating matrix at every step, no lookahead)...")
-    result = walk_forward_backtest(close, labels)
+    result = walk_forward_backtest(close, labels, min_train=min_train, bars_per_year=bars_per_year)
     sharpe = result["sharpe"]
     mdd = result["max_drawdown"]
     if np.isfinite(sharpe):
