@@ -217,7 +217,7 @@ def _row_html(r: dict) -> str:
     </table>"""
 
 
-def build_html(results: list[dict], timestamp: str) -> str:
+def build_html(results: list[dict], timestamp: str, config: dict | None = None) -> str:
     ok = [r for r in results if not r.get("error")]
     errors = [r for r in results if r.get("error")]
     cards = "".join(_row_html(r) for r in ok)
@@ -228,10 +228,20 @@ def build_html(results: list[dict], timestamp: str) -> str:
     high_risk = [r for r in ok if r["p_bear"] > 0.60]
     summary = f"<strong>{len(high_risk)} HIGH RISK</strong>" if high_risk else "Sin alertas HIGH RISK"
 
+    config_html = ""
+    if config:
+        style_part = f"style={config['style']} · " if config.get("style") else ""
+        config_html = (
+            f"<p style='margin:0 0 20px;color:#94a3b8;font-size:11px;'>"
+            f"{style_part}years={config['years']} · interval={config['interval']} · window={config['window']}"
+            f"</p>"
+        )
+
     return f"""
     <div style="font-family:sans-serif;max-width:680px;margin:auto;padding:24px;background:#ffffff;">
       <h2 style="margin:0 0 4px;color:#0f172a;">Markov Crypto Report</h2>
       <p style="margin:0 0 6px;color:#64748b;font-size:13px;">{timestamp}</p>
+      {config_html}
       <p style="margin:0 0 24px;font-size:13px;color:#334155;">{summary}</p>
       {cards}
       {error_html}
@@ -341,7 +351,7 @@ def main() -> int:
         if high_risk
         else f"✅ Markov Crypto Report — {timestamp}"
     )
-    html = build_html(results, timestamp)
+    html = build_html(results, timestamp, config={"style": args.style, "years": years, "interval": interval, "window": window})
 
     try:
         if os.environ.get("RESEND_API_KEY"):
