@@ -125,6 +125,9 @@ def analyze(ticker: str, years: int, window: int, threshold: float, interval: st
         return {"ticker": ticker, "error": "no data from market data provider"}
 
     labels = label_regimes(close, window=window, threshold=threshold)
+    if labels.empty:
+        return {"ticker": ticker, "error": f"insufficient data after regime labeling ({len(close)} bars)"}
+
     P = build_transition_matrix(labels)
     pi = stationary_distribution(P)
     result = walk_forward_backtest(close, labels, min_train=min_train, bars_per_year=bars_per_year)
