@@ -39,18 +39,22 @@ def build_transition_matrix(labels: pd.Series) -> np.ndarray:
     non_empty = row_sums[:, 0] > 0
     P = np.zeros_like(counts)
     P[non_empty] = counts[non_empty] / row_sums[non_empty]
-    P[~non_empty] = 1.0 / 3.0  # uniform prior for states never observed
+    P[~non_empty] = 1.0 / 3.0  # fallback for states never observed
     return P
 
 
 def stationary_distribution(P: np.ndarray) -> np.ndarray:
     """Left eigenvector of P with eigenvalue 1, normalised to sum to 1."""
     eigvals, eigvecs = np.linalg.eig(P.T)
-    # Find the eigenvector closest to eigenvalue 1
     idx = np.argmin(np.abs(eigvals - 1.0))
     vec = np.real(eigvecs[:, idx])
-    vec = np.abs(vec)
-    return vec / vec.sum()
+    if vec.sum() < 0:
+        vec = -vec
+    vec = vec / vec.sum()
+    vec[np.abs(vec) < 1e-12] = 0.0
+    if np.any(vec < -1e-8):
+        raise ValueError("Stationary distribution has negative components.")
+    return vec
 
 
 def n_step_forecast(P: np.ndarray, n: int) -> np.ndarray:
@@ -72,12 +76,13 @@ def walk_forward_backtest(
     min_train: int = 252,
     bars_per_year: int = 252,
 ) -> dict:
-    """Walk-forward: at each day t, fit the matrix on labels up to t-1,
-    derive the signal from the current state, hold for one day, score.
+    """Walk-forward: at each close t, fit the matrix on labels up to t-1,
+    derive the signal from the observed state at t, hold from close t to
+    close t+1, and score using the next daily return.
 
-    No lookahead. No tuning.
+    No lookahead under close-to-close execution. No tuning.
     """
-    daily_returns = close.pct_change().dropna()
+    daily_returns = close.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
     common_index = labels.index.intersection(daily_returns.index)
     labels = labels.loc[common_index]
     daily_returns = daily_returns.loc[common_index]
@@ -100,9 +105,12 @@ def walk_forward_backtest(
     else:
         sharpe = float(sr.mean() / sr.std(ddof=1) * np.sqrt(bars_per_year))
 
-    equity = (1.0 + sr).cumprod()
-    running_max = np.maximum.accumulate(equity)
-    drawdown = (equity - running_max) / running_max
-    max_dd = float(drawdown.min()) if len(drawdown) else float("nan")
+    if len(sr) == 0 or np.any(1.0 + sr <= 0):
+        max_dd = float("nan")
+    else:
+        equity = (1.0 + sr).cumprod()
+        running_max = np.maximum.accumulate(equity)
+        drawdown = (equity - running_max) / running_max
+        max_dd = float(drawdown.min())
 
     return {"sharpe": sharpe, "max_drawdown": max_dd, "n_periods": int(len(sr))}
