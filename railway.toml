@@ -1,2 +1,2 @@
 [deploy]
-startCommand = "python -m markov_hedge_fund_method.crypto_routine --tickers BTC-USD,ETH-USD,SOL-USD,ZEC-USD,XRP-USD,DOGE-USD,NEAR-USD,BNB-USD,SUI-USD --style swing-intraday"
+startCommand = "python -m markov_hedge_fund_method.crypto_routine --tickers BTC-USD,ETH-USD,SOL-USD,XRP-USD,DOGE-USD,BNB-USD,SUI-USD,ADA-USD,AVAX-USD,LINK-USD,NEAR-USD,TON-USD,TRX-USD,LTC-USD,BCH-USD,HYPE-USD --style swing-intraday"
