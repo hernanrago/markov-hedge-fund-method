@@ -189,45 +189,63 @@ def _regime_color(regime: str) -> str:
     return {"Bull": "#15803d", "Bear": "#dc2626", "Sideways": "#d97706"}.get(regime, "#334155")
 
 
-def _row_html(r: dict) -> str:
-    sharpe_str = f"{r['sharpe']:.3f}" if np.isfinite(r["sharpe"]) else "N/A"
-    flag = "🔴 HIGH RISK" if r["p_bear"] > 0.60 else ""
-    regime_color = _regime_color(r["current_regime"])
-    rows = [
-        ("Régimen actual", f'<span style="color:{regime_color};font-weight:bold;">{r["current_regime"]}</span>'),
-        ("P(Bull mañana)", f"{r['p_bull']*100:.1f}%"),
-        ("P(Bear mañana)", f"{r['p_bear']*100:.1f}%"),
-        ("P(Sideways)",    f"{r['p_sideways']*100:.1f}%"),
-        ("Sharpe WF",      sharpe_str),
-        ("Flag",           flag),
-    ]
-    rows_html = "".join(
-        f'<tr style="background:{"#f8fafc" if i % 2 == 0 else "#ffffff"};">'
-        f'<td style="padding:6px 12px;color:#64748b;white-space:nowrap;">{label}</td>'
-        f'<td style="padding:6px 12px;font-size:13px;">{value}</td>'
-        f"</tr>"
-        for i, (label, value) in enumerate(rows)
-        if value
+def _next_bar_label(interval: str) -> str:
+    return "mañana" if interval == "1d" else f"próx. {interval}"
+
+
+def _build_comparison_table(ok: list[dict], interval: str) -> str:
+    next_bar = _next_bar_label(interval)
+    th_style = "padding:8px 14px;text-align:right;font-weight:bold;white-space:nowrap;"
+    th_label = "padding:8px 14px;text-align:left;font-weight:bold;color:#94a3b8;font-weight:normal;"
+    td_val   = "padding:6px 14px;text-align:right;font-size:13px;"
+    td_label = "padding:6px 14px;color:#64748b;white-space:nowrap;font-size:13px;"
+
+    header_cells = "".join(
+        f'<th style="{th_style}">{r["ticker"]}</th>' for r in ok
     )
-    return f"""
-    <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-family:monospace;font-size:13px;">
-      <thead>
-        <tr style="background:#1e293b;color:#f1f5f9;">
-          <th colspan="2" style="padding:10px 14px;text-align:left;">{r['ticker']}</th>
-        </tr>
-      </thead>
-      <tbody>{rows_html}</tbody>
-    </table>"""
+    header = f'<tr style="background:#1e293b;color:#f1f5f9;"><th style="{th_label}"></th>{header_cells}</tr>'
+
+    def metric_row(label: str, values: list[str], idx: int) -> str:
+        bg = "#f8fafc" if idx % 2 == 0 else "#ffffff"
+        cells = "".join(f'<td style="{td_val}">{v}</td>' for v in values)
+        return f'<tr style="background:{bg};"><td style="{td_label}">{label}</td>{cells}</tr>'
+
+    metrics: list[tuple[str, list[str]]] = [
+        ("Régimen actual", [
+            f'<span style="color:{_regime_color(r["current_regime"])};font-weight:bold;">{r["current_regime"]}</span>'
+            for r in ok
+        ]),
+        (f"P(Bull {next_bar})", [f"{r['p_bull']*100:.1f}%" for r in ok]),
+        (f"P(Bear {next_bar})", [f"{r['p_bear']*100:.1f}%" for r in ok]),
+        ("P(Sideways)",          [f"{r['p_sideways']*100:.1f}%" for r in ok]),
+        ("Sharpe WF",            [f"{r['sharpe']:.3f}" if np.isfinite(r["sharpe"]) else "N/A" for r in ok]),
+        ("Flag",                 ["🔴 HIGH RISK" if r["p_bear"] > 0.60 else "" for r in ok]),
+    ]
+
+    body = "".join(
+        metric_row(label, values, i)
+        for i, (label, values) in enumerate(metrics)
+        if any(v for v in values)
+    )
+
+    return (
+        f'<table style="width:100%;border-collapse:collapse;font-family:monospace;font-size:13px;">'
+        f"<thead>{header}</thead><tbody>{body}</tbody></table>"
+    )
 
 
 def build_html(results: list[dict], timestamp: str, config: dict | None = None) -> str:
     ok = [r for r in results if not r.get("error")]
     errors = [r for r in results if r.get("error")]
-    cards = "".join(_row_html(r) for r in ok)
+    interval = (config or {}).get("interval", "1d")
+
+    table_html = _build_comparison_table(ok, interval) if ok else ""
+
     error_html = ""
     if errors:
         error_html = "<p style='color:#dc2626;font-size:12px;'>Errores: " + \
                      ", ".join(f"{r['ticker']} ({r['error']})" for r in errors) + "</p>"
+
     high_risk = [r for r in ok if r["p_bear"] > 0.60]
     summary = f"<strong>{len(high_risk)} HIGH RISK</strong>" if high_risk else "Sin alertas HIGH RISK"
 
@@ -241,12 +259,12 @@ def build_html(results: list[dict], timestamp: str, config: dict | None = None) 
         )
 
     return f"""
-    <div style="font-family:sans-serif;max-width:680px;margin:auto;padding:24px;background:#ffffff;">
+    <div style="font-family:sans-serif;max-width:860px;margin:auto;padding:24px;background:#ffffff;">
       <h2 style="margin:0 0 4px;color:#0f172a;">Markov Crypto Report</h2>
       <p style="margin:0 0 6px;color:#64748b;font-size:13px;">{timestamp}</p>
       {config_html}
       <p style="margin:0 0 24px;font-size:13px;color:#334155;">{summary}</p>
-      {cards}
+      {table_html}
       {error_html}
       <p style="margin-top:24px;color:#94a3b8;font-size:11px;text-align:center;">
         markov-hedge-fund-method · Railway cron
