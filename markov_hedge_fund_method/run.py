@@ -1,8 +1,17 @@
 """CLI entry point: fetch -> label -> matrix -> stationary -> walk-forward.
 
 Usage:
+    uv run python -m markov_hedge_fund_method.run --ticker SPY --style swing
     uv run python -m markov_hedge_fund_method.run --ticker BTC-USD --years 2 --interval 1h
     uv run python -m markov_hedge_fund_method.run --ticker SPY --years 10 --interval 1d
+
+Trading style presets (--style):
+    position       years=10  interval=1d  window=250  (macro trend following)
+    swing          years=6   interval=1d  window=150  (balanced, good default)
+    swing-intraday years=5   interval=4h  window=200  (short swing / intraday)
+    day            years=3   interval=1h  window=150  (day trading)
+    day-active     years=2   interval=15m window=115  (active day trading)
+    scalping       years=1   interval=5m  window=90   (scalping)
 
 Note: bars_per_year defaults assume 24/7 crypto trading. For equities use --interval 1d.
 """
@@ -33,6 +42,15 @@ _INTERVAL_DEFAULTS: dict[str, dict] = {
     "4h":  {"bars_per_year": 2190,   "window": 42,   "min_train": 504},
     "15m": {"bars_per_year": 35040,  "window": 672,  "min_train": 2016},
     "5m":  {"bars_per_year": 105120, "window": 2016, "min_train": 6048},
+}
+
+_STYLE_PRESETS: dict[str, dict] = {
+    "position":       {"years": 10, "interval": "1d",  "window": 250},
+    "swing":          {"years":  6, "interval": "1d",  "window": 150},
+    "swing-intraday": {"years":  5, "interval": "4h",  "window": 200},
+    "day":            {"years":  3, "interval": "1h",  "window": 150},
+    "day-active":     {"years":  2, "interval": "15m", "window": 115},
+    "scalping":       {"years":  1, "interval": "5m",  "window":  90},
 }
 
 _MAX_LOOKBACK_DAYS: dict[str, int] = {
@@ -89,25 +107,36 @@ def _fetch_with_retry(ticker: str, years: int, interval: str = "1d") -> pd.DataF
 def main() -> int:
     parser = argparse.ArgumentParser(prog="markov-hedge-fund-method")
     parser.add_argument("--ticker", default="SPY")
-    parser.add_argument("--years", type=int, default=10)
+    parser.add_argument("--years", type=int, default=None)
     parser.add_argument("--window", type=int, default=None)
     parser.add_argument("--threshold", type=float, default=0.02)
     parser.add_argument("--no-hmm", action="store_true")
     parser.add_argument(
-        "--interval", default="1d",
+        "--interval", default=None,
         choices=["1d", "1h", "4h", "15m", "5m"],
-        help="Bar interval. 1h: up to 730 days history from Yahoo Finance.",
+        help="Bar interval. 1h/4h: up to 720 days history from Yahoo Finance.",
+    )
+    parser.add_argument(
+        "--style", default=None,
+        choices=list(_STYLE_PRESETS),
+        help="Trading style preset (sets --years/--interval/--window defaults). "
+             "Explicit flags override preset values.",
     )
     args = parser.parse_args()
 
-    defaults = _INTERVAL_DEFAULTS.get(args.interval, _INTERVAL_DEFAULTS["1d"])
-    window = args.window if args.window is not None else defaults["window"]
+    preset = _STYLE_PRESETS.get(args.style, {}) if args.style else {}
+    interval = args.interval or preset.get("interval", "1d")
+    years = args.years if args.years is not None else preset.get("years", 10)
+
+    defaults = _INTERVAL_DEFAULTS.get(interval, _INTERVAL_DEFAULTS["1d"])
+    window = args.window if args.window is not None else preset.get("window", defaults["window"])
     bars_per_year = defaults["bars_per_year"]
     min_train = defaults["min_train"]
 
-    print(f"\nmarkov-hedge-fund-method — ticker={args.ticker} years={args.years} window={window} interval={args.interval}")
+    style_label = f" style={args.style}" if args.style else ""
+    print(f"\nmarkov-hedge-fund-method — ticker={args.ticker} years={years} window={window} interval={interval}{style_label}")
     print(f"  fetching {args.ticker} from Yahoo Finance...")
-    df = _fetch_with_retry(args.ticker, args.years, interval=args.interval)
+    df = _fetch_with_retry(args.ticker, years, interval=interval)
 
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)

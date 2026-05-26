@@ -57,6 +57,15 @@ _INTERVAL_DEFAULTS: dict[str, dict] = {
 }
 
 
+_STYLE_PRESETS: dict[str, dict] = {
+    "position":       {"years": 10, "interval": "1d",  "window": 250},
+    "swing":          {"years":  6, "interval": "1d",  "window": 150},
+    "swing-intraday": {"years":  5, "interval": "4h",  "window": 200},
+    "day":            {"years":  3, "interval": "1h",  "window": 150},
+    "day-active":     {"years":  2, "interval": "15m", "window": 115},
+    "scalping":       {"years":  1, "interval": "5m",  "window":  90},
+}
+
 _MAX_LOOKBACK_DAYS: dict[str, int] = {
     "1m": 7, "5m": 60, "15m": 60, "30m": 60,
     "1h": 720, "4h": 720, "1d": 36500,
@@ -278,26 +287,37 @@ def send_email_resend(subject: str, html: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(prog="crypto-routine")
     parser.add_argument("--tickers", default="BTC-USD,ETH-USD,SOL-USD,ZEC-USD,XRP-USD,DOGE-USD,NEAR-USD,BNB-USD,SUI-USD")
-    parser.add_argument("--years",     type=int,   default=2)
+    parser.add_argument("--years",     type=int,   default=None)
     parser.add_argument("--window",    type=int,   default=None,
-        help="Rolling window in bars (default: auto from --interval)")
+        help="Rolling window in bars (default: auto from --interval or --style)")
     parser.add_argument("--threshold", type=float, default=0.02)
     parser.add_argument(
-        "--interval", default="1d",
+        "--interval", default=None,
         choices=["1d", "1h", "4h", "15m", "5m"],
-        help="Bar interval. 1h: up to 730 days history from Yahoo Finance.",
+        help="Bar interval. 1h/4h: up to 720 days history from Yahoo Finance.",
+    )
+    parser.add_argument(
+        "--style", default=None,
+        choices=list(_STYLE_PRESETS),
+        help="Trading style preset (sets --years/--interval/--window defaults). "
+             "Explicit flags override preset values.",
     )
     args = parser.parse_args()
 
-    window = args.window if args.window is not None else _INTERVAL_DEFAULTS.get(args.interval, _INTERVAL_DEFAULTS["1d"])["window"]
+    preset = _STYLE_PRESETS.get(args.style, {}) if args.style else {}
+    interval = args.interval or preset.get("interval", "1d")
+    years = args.years if args.years is not None else preset.get("years", 2)
+    window = args.window if args.window is not None else preset.get("window", _INTERVAL_DEFAULTS.get(interval, _INTERVAL_DEFAULTS["1d"])["window"])
+
     tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-    print(f"Running Markov model on {len(tickers)} tickers (years={args.years}, window={window}, interval={args.interval})...")
+    style_label = f", style={args.style}" if args.style else ""
+    print(f"Running Markov model on {len(tickers)} tickers (years={years}, window={window}, interval={interval}{style_label})...")
     results = []
     for ticker in tickers:
         print(f"  {ticker}...", end=" ", flush=True)
-        r = analyze(ticker, args.years, window, args.threshold, interval=args.interval)
+        r = analyze(ticker, years, window, args.threshold, interval=interval)
         results.append(r)
         print("ok" if not r.get("error") else f"SKIP ({r['error']})")
         if r.get("ingest_meta"):
