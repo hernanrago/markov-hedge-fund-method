@@ -145,7 +145,7 @@ def main() -> int:
         print(f"  Max drawdown:                       {mdd*100:.2f}%")
     else:
         print("  Max drawdown: NaN")
-    print(f"  Trades evaluated: {result['n_trades']}")
+    print(f"  Periods evaluated: {result['n_periods']}")
 
     if not args.no_hmm and _hmm_available():
         print("\nFitting Hidden Markov Model (Baum-Welch + Viterbi via hmmlearn)...")

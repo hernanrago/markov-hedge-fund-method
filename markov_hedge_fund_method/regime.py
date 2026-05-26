@@ -1,6 +1,6 @@
 """Observable Markov regime model.
 
-Labels each day Bull (1), Bear (-1), or Sideways (0) using a rolling
+Labels each day Bear (0), Sideways (1), or Bull (2) using a rolling
 return threshold, then builds a 3x3 transition matrix via MLE counting,
 solves for the stationary distribution, and runs a walk-forward backtest.
 """
@@ -21,10 +21,11 @@ def label_regimes(close: pd.Series, window: int = 20, threshold: float = 0.02) -
     Sideways: otherwise
     """
     rolling_return = close.pct_change(window)
-    labels = pd.Series(1, index=close.index, dtype=int)  # default Sideways
-    labels[rolling_return > threshold] = 2  # Bull
+    labels = pd.Series(np.nan, index=close.index)
+    labels[rolling_return > threshold] = 2   # Bull
     labels[rolling_return < -threshold] = 0  # Bear
-    return labels.dropna()
+    labels[(rolling_return <= threshold) & (rolling_return >= -threshold)] = 1  # Sideways
+    return labels.dropna().astype(int)
 
 
 def build_transition_matrix(labels: pd.Series) -> np.ndarray:
@@ -35,8 +36,11 @@ def build_transition_matrix(labels: pd.Series) -> np.ndarray:
     for i in range(len(arr) - 1):
         counts[arr[i], arr[i + 1]] += 1
     row_sums = counts.sum(axis=1, keepdims=True)
-    row_sums[row_sums == 0] = 1.0  # avoid divide-by-zero on empty rows
-    return counts / row_sums
+    non_empty = row_sums[:, 0] > 0
+    P = np.zeros_like(counts)
+    P[non_empty] = counts[non_empty] / row_sums[non_empty]
+    P[~non_empty] = 1.0 / 3.0  # uniform prior for states never observed
+    return P
 
 
 def stationary_distribution(P: np.ndarray) -> np.ndarray:
@@ -79,7 +83,7 @@ def walk_forward_backtest(
     daily_returns = daily_returns.loc[common_index]
 
     if len(labels) < min_train + 30:
-        return {"sharpe": float("nan"), "max_drawdown": float("nan"), "n_trades": 0}
+        return {"sharpe": float("nan"), "max_drawdown": float("nan"), "n_periods": 0}
 
     strategy_returns = []
     for t in range(min_train, len(labels) - 1):
@@ -101,4 +105,4 @@ def walk_forward_backtest(
     drawdown = (equity - running_max) / running_max
     max_dd = float(drawdown.min()) if len(drawdown) else float("nan")
 
-    return {"sharpe": sharpe, "max_drawdown": max_dd, "n_trades": int(len(sr))}
+    return {"sharpe": sharpe, "max_drawdown": max_dd, "n_periods": int(len(sr))}
