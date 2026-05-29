@@ -37,20 +37,21 @@ def build_alignment_rows(
     Returns:
         list of dicts with keys:
             symbol            – BingX symbol (e.g. "BTC-USDT")
-            current_direction – "Long" or "Short" (from BingX)
+            current_direction – "Long", "Short", or "Sin posicion"
             report_direction  – "Long", "Short", or "Neutral" (from Markov regime)
-            aligned           – "Alineado", "Desalineado", or "Neutral"
+            aligned           – "Alineado", "Desalineado", "Neutral", or "Sin posicion"
     """
     rows = []
     for r in results:
         if r.get("error"):
             continue
         bingx_symbol = yahoo_to_bingx(r["ticker"])
-        if bingx_symbol not in positions:
-            continue
-        current_dir = positions[bingx_symbol]
+        current_dir = positions.get(bingx_symbol)
         report_dir = REGIME_TO_DIRECTION.get(r["current_regime"])
-        if report_dir is None:
+        if current_dir is None:
+            current_dir = "Sin posicion"
+            status = "Sin posicion"
+        elif report_dir is None:
             status = "Neutral"
         else:
             status = "Alineado" if current_dir == report_dir else "Desalineado"
@@ -64,7 +65,12 @@ def build_alignment_rows(
 
 
 def _dir_color(d: str) -> str:
-    return {"Long": "#15803d", "Short": "#dc2626", "Neutral": "#d97706"}.get(d, "#334155")
+    return {
+        "Long": "#15803d",
+        "Short": "#dc2626",
+        "Neutral": "#d97706",
+        "Sin posicion": "#64748b",
+    }.get(d, "#334155")
 
 
 def _status_badge(status: str) -> str:
@@ -72,6 +78,8 @@ def _status_badge(status: str) -> str:
         return '<span style="color:#15803d;font-weight:bold;">✓ Alineado</span>'
     if status == "Desalineado":
         return '<span style="color:#dc2626;font-weight:bold;">✗ Desalineado</span>'
+    if status == "Sin posicion":
+        return '<span style="color:#64748b;">— Sin posicion</span>'
     return '<span style="color:#d97706;">— Neutral</span>'
 
 
@@ -86,7 +94,7 @@ def render_alignment_table_html(rows: list[dict]) -> str:
     header = (
         f'<tr style="background:#1e293b;color:#f1f5f9;">'
         f'<th style="{th}">Símbolo</th>'
-        f'<th style="{th}">Posición BingX</th>'
+        f'<th style="{th}">Posicion actual</th>'
         f'<th style="{th}">Sesgo Reporte</th>'
         f'<th style="{th}">Estado</th>'
         f'</tr>'
@@ -105,15 +113,16 @@ def render_alignment_table_html(rows: list[dict]) -> str:
         )
 
     desalineados = sum(1 for r in rows if r["aligned"] == "Desalineado")
+    sin_posicion = sum(1 for r in rows if r["aligned"] == "Sin posicion")
     summary_color = "#dc2626" if desalineados else "#15803d"
-    summary_text = (
-        f'<strong style="color:{summary_color};">{desalineados} posición(es) desalineada(s)</strong>'
-        if desalineados
-        else '<strong style="color:#15803d;">Todas las posiciones alineadas</strong>'
-    )
+    summary_text = f'<strong style="color:{summary_color};">{desalineados} posicion(es) desalineada(s)</strong>'
+    if sin_posicion:
+        summary_text += f' · <span style="color:#64748b;">{sin_posicion} sin posicion</span>'
+    elif not desalineados:
+        summary_text = '<strong style="color:#15803d;">Todas las posiciones abiertas alineadas</strong>'
 
     return (
-        f'<h3 style="margin:32px 0 4px;color:#0f172a;font-size:14px;">Alineación BingX vs Reporte</h3>'
+        f'<h3 style="margin:32px 0 4px;color:#0f172a;font-size:14px;">Posiciones vs Reporte</h3>'
         f'<p style="margin:0 0 8px;font-size:12px;color:#64748b;">{summary_text}</p>'
         f'<table style="width:100%;border-collapse:collapse;font-family:monospace;font-size:13px;">'
         f'<thead>{header}</thead>'

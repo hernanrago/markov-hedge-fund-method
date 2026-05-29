@@ -381,7 +381,7 @@ def main() -> int:
         try:
             positions = get_all_positions()
             alignment_rows = build_alignment_rows(results, positions)
-            print(f"BingX: {len(positions)} posición(es) abierta(s), {len(alignment_rows)} coinciden con tickers del reporte.")
+            print(f"BingX: {len(positions)} posicion(es) abierta(s), tabla de alineacion generada para {len(alignment_rows)} instrumento(s) del reporte.")
         except Exception as exc:  # noqa: BLE001
             print(f"BingX positions no disponibles: {exc}")
 
