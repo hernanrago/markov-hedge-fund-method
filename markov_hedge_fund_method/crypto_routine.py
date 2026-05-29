@@ -30,6 +30,7 @@ import numpy as np
 import pandas as pd
 import requests
 
+from .position_alignment import build_alignment_rows, render_alignment_table_html
 from .providers import get_provider
 from .regime import (
     STATES,
@@ -38,6 +39,7 @@ from .regime import (
     stationary_distribution,
     walk_forward_backtest,
 )
+from .services.bingx_service import get_all_positions
 from .services.data_service import DataService
 
 # Load .env if present (local dev); Railway injects env vars directly
@@ -234,7 +236,12 @@ def _build_comparison_table(ok: list[dict], interval: str) -> str:
     )
 
 
-def build_html(results: list[dict], timestamp: str, config: dict | None = None) -> str:
+def build_html(
+    results: list[dict],
+    timestamp: str,
+    config: dict | None = None,
+    alignment_rows: list[dict] | None = None,
+) -> str:
     ok = [r for r in results if not r.get("error")]
     errors = [r for r in results if r.get("error")]
     interval = (config or {}).get("interval", "1d")
@@ -258,6 +265,8 @@ def build_html(results: list[dict], timestamp: str, config: dict | None = None) 
             f"</p>"
         )
 
+    alignment_html = render_alignment_table_html(alignment_rows or [])
+
     return f"""
     <div style="font-family:sans-serif;max-width:860px;margin:auto;padding:24px;background:#ffffff;">
       <h2 style="margin:0 0 4px;color:#0f172a;">Markov Crypto Report</h2>
@@ -265,6 +274,7 @@ def build_html(results: list[dict], timestamp: str, config: dict | None = None) 
       {config_html}
       <p style="margin:0 0 24px;font-size:13px;color:#334155;">{summary}</p>
       {table_html}
+      {alignment_html}
       {error_html}
       <p style="margin-top:24px;color:#94a3b8;font-size:11px;text-align:center;">
         markov-hedge-fund-method · Railway cron
@@ -366,13 +376,27 @@ def main() -> int:
         print("Ni RESEND_API_KEY ni SMTP_USER configurados — email omitido.")
         return 0
 
+    alignment_rows: list[dict] = []
+    if os.environ.get("BINGX_API_KEY") and os.environ.get("BINGX_API_SECRET"):
+        try:
+            positions = get_all_positions()
+            alignment_rows = build_alignment_rows(results, positions)
+            print(f"BingX: {len(positions)} posición(es) abierta(s), {len(alignment_rows)} coinciden con tickers del reporte.")
+        except Exception as exc:  # noqa: BLE001
+            print(f"BingX positions no disponibles: {exc}")
+
     high_risk = [r for r in results if not r.get("error") and r["p_bear"] > 0.60]
     subject = (
         f"🔴 Markov Crypto — {len(high_risk)} HIGH RISK: {', '.join(r['ticker'] for r in high_risk)}"
         if high_risk
         else f"✅ Markov Crypto Report — {timestamp}"
     )
-    html = build_html(results, timestamp, config={"style": args.style, "years": years, "interval": interval, "window": window})
+    html = build_html(
+        results,
+        timestamp,
+        config={"style": args.style, "years": years, "interval": interval, "window": window},
+        alignment_rows=alignment_rows,
+    )
 
     try:
         if os.environ.get("RESEND_API_KEY"):
