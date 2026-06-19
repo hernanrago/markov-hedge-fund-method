@@ -73,18 +73,23 @@ class BingXProvider:
                 break
 
             for c in candles:
-                open_time_ms = int(c[0])
+                if isinstance(c, dict):
+                    open_time_ms = int(c["time"])
+                    o, h, l, cl, vol = c.get("open"), c.get("high"), c.get("low"), c.get("close"), c.get("volume")
+                else:
+                    open_time_ms = int(c[0])
+                    o, h, l, cl, vol = c[1], c[2], c[3], c[4], c[5]
                 ts = datetime.fromtimestamp(open_time_ms / 1000, tz=timezone.utc)
                 bars.append(PriceBar(
                     ticker=symbol,
                     provider_symbol=bingx_symbol,
                     interval=interval,
                     ts=ts,
-                    open=float(c[1]) if c[1] else None,
-                    high=float(c[2]) if c[2] else None,
-                    low=float(c[3]) if c[3] else None,
-                    close=float(c[4]) if c[4] else None,
-                    volume=float(c[5]) if c[5] else None,
+                    open=float(o) if o else None,
+                    high=float(h) if h else None,
+                    low=float(l) if l else None,
+                    close=float(cl) if cl else None,
+                    volume=float(vol) if vol else None,
                 ))
 
             last_open_ms = int(candles[-1][0])
