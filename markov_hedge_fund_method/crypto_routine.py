@@ -118,7 +118,9 @@ def analyze(ticker: str, years: int, window: int, threshold: float, interval: st
             service = DataService(provider=provider)
             close, ingest_meta = service.get_close_series(ticker=ticker, years=years, interval=interval)
         except Exception as exc:  # noqa: BLE001
-            print(f"    [provider error] {exc}", flush=True)
+            import traceback
+            print(f"    [provider error] {type(exc).__name__}: {exc}", flush=True)
+            traceback.print_exc()
             ingest_meta = {"provider": "fallback", "error": str(exc)}
 
     if close.empty:
