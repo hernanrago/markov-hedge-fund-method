@@ -200,35 +200,29 @@ def _build_comparison_table(ok: list[dict], interval: str) -> str:
     th_style = "padding:8px 14px;text-align:right;font-weight:bold;white-space:nowrap;"
     th_label = "padding:8px 14px;text-align:left;font-weight:bold;color:#94a3b8;font-weight:normal;"
     td_val   = "padding:6px 14px;text-align:right;font-size:13px;"
-    td_label = "padding:6px 14px;color:#64748b;white-space:nowrap;font-size:13px;"
+    td_ticker = "padding:6px 14px;font-weight:bold;white-space:nowrap;font-size:13px;"
 
-    header_cells = "".join(
-        f'<th style="{th_style}">{r["ticker"]}</th>' for r in ok
-    )
-    header = f'<tr style="background:#1e293b;color:#f1f5f9;"><th style="{th_label}"></th>{header_cells}</tr>'
+    headers = ["Ticker", "Régimen", f"P(Bull {next_bar})", f"P(Bear {next_bar})", "P(Sideways)", "Sharpe WF", ""]
+    header_cells = "".join(f'<th style="{th_style}">{h}</th>' for h in headers)
+    header = f'<tr style="background:#1e293b;color:#f1f5f9;">{header_cells}</tr>'
 
-    def metric_row(label: str, values: list[str], idx: int) -> str:
+    def instrument_row(r: dict, idx: int) -> str:
         bg = "#f8fafc" if idx % 2 == 0 else "#ffffff"
-        cells = "".join(f'<td style="{td_val}">{v}</td>' for v in values)
-        return f'<tr style="background:{bg};"><td style="{td_label}">{label}</td>{cells}</tr>'
+        flag = "🔴" if r["p_bear"] > 0.60 else ""
+        sharpe = f"{r['sharpe']:.3f}" if np.isfinite(r["sharpe"]) else "N/A"
+        regime_cell = f'<span style="color:{_regime_color(r["current_regime"])};font-weight:bold;">{r["current_regime"]}</span>'
+        cells = (
+            f'<td style="{td_ticker}">{r["ticker"]}</td>'
+            f'<td style="{td_val}">{regime_cell}</td>'
+            f'<td style="{td_val}">{r["p_bull"]*100:.1f}%</td>'
+            f'<td style="{td_val}">{r["p_bear"]*100:.1f}%</td>'
+            f'<td style="{td_val}">{r["p_sideways"]*100:.1f}%</td>'
+            f'<td style="{td_val}">{sharpe}</td>'
+            f'<td style="{td_val}">{flag}</td>'
+        )
+        return f'<tr style="background:{bg};">{cells}</tr>'
 
-    metrics: list[tuple[str, list[str]]] = [
-        ("Régimen actual", [
-            f'<span style="color:{_regime_color(r["current_regime"])};font-weight:bold;">{r["current_regime"]}</span>'
-            for r in ok
-        ]),
-        (f"P(Bull {next_bar})", [f"{r['p_bull']*100:.1f}%" for r in ok]),
-        (f"P(Bear {next_bar})", [f"{r['p_bear']*100:.1f}%" for r in ok]),
-        ("P(Sideways)",          [f"{r['p_sideways']*100:.1f}%" for r in ok]),
-        ("Sharpe WF",            [f"{r['sharpe']:.3f}" if np.isfinite(r["sharpe"]) else "N/A" for r in ok]),
-        ("Flag",                 ["🔴 HIGH RISK" if r["p_bear"] > 0.60 else "" for r in ok]),
-    ]
-
-    body = "".join(
-        metric_row(label, values, i)
-        for i, (label, values) in enumerate(metrics)
-        if any(v for v in values)
-    )
+    body = "".join(instrument_row(r, i) for i, r in enumerate(ok))
 
     return (
         f'<table style="width:100%;border-collapse:collapse;font-family:monospace;font-size:13px;">'
