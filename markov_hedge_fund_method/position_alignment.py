@@ -17,10 +17,17 @@ REGIME_TO_DIRECTION: dict[str, str | None] = {
 }
 
 
+_YAHOO_TO_BINGX_OVERRIDES: dict[str, str] = {
+    "PEPE-USDT": "1000PEPE-USDT",
+    "BONK-USDT": "1000BONK-USDT",
+}
+
+
 def yahoo_to_bingx(ticker: str) -> str:
     """Convert Yahoo Finance ticker to BingX symbol: BTC-USD → BTC-USDT."""
     if ticker.endswith("-USD"):
-        return ticker[:-4] + "-USDT"
+        bingx = ticker[:-4] + "-USDT"
+        return _YAHOO_TO_BINGX_OVERRIDES.get(bingx, bingx)
     return ticker
 
 

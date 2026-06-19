@@ -327,7 +327,7 @@ def send_email_resend(subject: str, html: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="crypto-routine")
-    parser.add_argument("--tickers", default="BTC-USD,ETH-USD,SOL-USD,XRP-USD,DOGE-USD,BNB-USD,SUI-USD,ADA-USD,AVAX-USD,LINK-USD,NEAR-USD,TON-USD,TRX-USD,LTC-USD,BCH-USD,HYPE-USD")
+    parser.add_argument("--tickers", default="BTC-USD,ETH-USD,SOL-USD,BNB-USD,XRP-USD,DOGE-USD,LINK-USD,SUI-USD,PEPE-USD,SHIB-USD,ADA-USD,AVAX-USD,DOT-USD,NEAR-USD,UNI-USD,POL-USD,LTC-USD,FET-USD,APT-USD,OP-USD,ARB-USD,INJ-USD,TIA-USD,SEI-USD,WIF-USD,JUP-USD,BONK-USD,ENA-USD,STRK-USD")
     parser.add_argument("--years",     type=int,   default=None)
     parser.add_argument("--window",    type=int,   default=None,
         help="Rolling window in bars (default: auto from --interval or --style)")
