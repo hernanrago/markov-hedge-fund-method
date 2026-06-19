@@ -92,7 +92,8 @@ class BingXProvider:
                     volume=float(vol) if vol else None,
                 ))
 
-            last_open_ms = int(candles[-1][0])
+            last_c = candles[-1]
+            last_open_ms = int(last_c["time"] if isinstance(last_c, dict) else last_c[0])
             if last_open_ms <= cursor:
                 break
             cursor = last_open_ms + 1
